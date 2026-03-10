@@ -1,40 +1,41 @@
 import os
+from dotenv import load_dotenv
 
-# Main class for the Anotai Meeting Assistant - Infrastructure Update
-# Classe principal para o assistente de reuniões Anotai - Atualização de Infraestrutura
+# Main class for the Anotai Meeting Assistant - Library Integration
+# Classe principal para o assistente de reuniões Anotai - Integração de Bibliotecas
 class Anotai:
     def __init__(self, meeting_name):
-        # Meeting metadata and directory management
-        # Metadados da reunião e gestão de diretórios
+        # Loading environment variables (API Keys, etc.)
+        # Carregando variáveis de ambiente (Chaves de API, etc.)
+        load_dotenv()
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        
         self.meeting_name = meeting_name
         self.base_dir = "data"
         self.recordings_dir = os.path.join(self.base_dir, "recordings")
         self.outputs_dir = os.path.join(self.base_dir, "outputs")
         
-        # Ensure the project folders exist
-        # Garante que as pastas do projeto existam
         self._setup_environment()
-        
         self.audio_path = os.path.join(self.recordings_dir, f"{meeting_name.lower().replace(' ', '_')}.wav")
 
     def _setup_environment(self):
-        # Create necessary folders for data and logs
-        # Cria as pastas necessárias para dados e logs
+        # Folder structure for data management
+        # Estrutura de pastas para gestão de dados
         for directory in [self.recordings_dir, self.outputs_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory)
-                print(f"[Anotai] Diretório criado: {directory}")
+                print(f"[Anotai] Diretório pronto: {directory}")
 
     def start_recording(self):
-        # Audio capture placeholder
-        # Espaço reservado para captura de áudio
-        print(f"[Anotai] Pronto para gravar: {self.meeting_name}")
-        print(f"[Anotai] Destino do áudio: {self.audio_path}")
+        # Audio recording trigger placeholder
+        # Gatilho para início de gravação de áudio
+        if not self.api_key:
+            print("[Anotai] AVISO: OPENAI_API_KEY não encontrada no arquivo .env")
+        
+        print(f"[Anotai] Iniciando captura para: {self.meeting_name}")
 
-# Application startup
-# Inicialização da aplicação
+# Execution block
+# Bloco de execução
 if __name__ == "__main__":
-    # Creating a planning meeting instance
-    # Criando uma instância de reunião de planejamento
-    app = Anotai("Planejamento Inicial")
+    app = Anotai("Reuniao de Alinhamento")
     app.start_recording()
