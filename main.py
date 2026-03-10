@@ -1,34 +1,40 @@
 import os
 
-# Main class for the Anotai Meeting Assistant - Environment Setup
-# Classe principal para o assistente de reuniões Anotai - Configuração de Ambiente
+# Main class for the Anotai Meeting Assistant - Infrastructure Update
+# Classe principal para o assistente de reuniões Anotai - Atualização de Infraestrutura
 class Anotai:
     def __init__(self, meeting_name):
-        # Initializing meeting properties and storage
-        # Inicializando propriedades da reunião e armazenamento
+        # Meeting metadata and directory management
+        # Metadados da reunião e gestão de diretórios
         self.meeting_name = meeting_name
-        # Folder for audio recordings / Pasta para gravações de áudio
-        self.recordings_dir = "recordings"
-        self._ensure_dir_exists()
+        self.base_dir = "data"
+        self.recordings_dir = os.path.join(self.base_dir, "recordings")
+        self.outputs_dir = os.path.join(self.base_dir, "outputs")
         
-        self.audio_path = f"{self.recordings_dir}/{meeting_name.replace(' ', '_').lower()}.wav"
-        self.transcription = ""
+        # Ensure the project folders exist
+        # Garante que as pastas do projeto existam
+        self._setup_environment()
+        
+        self.audio_path = os.path.join(self.recordings_dir, f"{meeting_name.lower().replace(' ', '_')}.wav")
 
-    def _ensure_dir_exists(self):
-        # Create recordings folder if it does not exist
-        # Cria a pasta de gravações caso não exista
-        if not os.path.exists(self.recordings_dir):
-            os.makedirs(self.recordings_dir)
-            print(f"[Anotai] Diretório {self.recordings_dir} criado.")
+    def _setup_environment(self):
+        # Create necessary folders for data and logs
+        # Cria as pastas necessárias para dados e logs
+        for directory in [self.recordings_dir, self.outputs_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                print(f"[Anotai] Diretório criado: {directory}")
 
     def start_recording(self):
-        # Initial trigger for voice capture
-        # Gatilho inicial para captura de voz
-        print(f"[Anotai] Ambiente pronto. Gravando reunião: {self.meeting_name}")
-        pass
+        # Audio capture placeholder
+        # Espaço reservado para captura de áudio
+        print(f"[Anotai] Pronto para gravar: {self.meeting_name}")
+        print(f"[Anotai] Destino do áudio: {self.audio_path}")
 
-# Application execution logic
-# Lógica de execução da aplicação
+# Application startup
+# Inicialização da aplicação
 if __name__ == "__main__":
-    app = Anotai("Configuracao Inicial Projeto")
+    # Creating a planning meeting instance
+    # Criando uma instância de reunião de planejamento
+    app = Anotai("Planejamento Inicial")
     app.start_recording()
