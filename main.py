@@ -2,12 +2,13 @@ import os
 import streamlit as st
 import datetime
 import json
+import pytz # New dependency for timezone / Nova dependência para fuso horário
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Anotai Class - Phase 9: File Management and Deletion
-# Classe Anotai - Fase 9: Gestão de Ficheiros e Exclusão
+# Anotai Class - Phase 10: Brazilian Timezone Configuration
+# Classe Anotai - Fase 10: Configuração de Fuso Horário Brasileiro
 class Anotai:
     def __init__(self):
         if os.path.exists(".env"):
@@ -29,6 +30,8 @@ class Anotai:
         self.recordings_dir = os.path.join(self.base_dir, "recordings")
         self.outputs_dir = os.path.join(self.base_dir, "outputs")
         self.config_file = os.path.join(self.base_dir, "ai_config.json")
+        # Define Brazil Timezone / Define Fuso Horário do Brasil
+        self.tz = pytz.timezone("America/Sao_Paulo")
         self._setup_environment()
 
     def _setup_environment(self):
@@ -52,7 +55,10 @@ class Anotai:
             json.dump(config_data, f, ensure_ascii=False, indent=4)
 
     def save_recording(self, meeting_name, audio_bytes):
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Get current time in Brazil / Pega a hora atual no Brasil
+        now_br = datetime.datetime.now(self.tz)
+        timestamp = now_br.strftime("%Y%m%d_%H%M%S")
+        
         clean_name = meeting_name.lower().replace(" ", "_") or "reuniao"
         filename = f"{timestamp}_{clean_name}.wav"
         path = os.path.join(self.recordings_dir, filename)
@@ -61,7 +67,6 @@ class Anotai:
         return filename
 
     def delete_recording(self, file_id):
-        # Delete audio and json cache / Apaga o áudio e o cache json
         audio_path = os.path.join(self.recordings_dir, file_id)
         json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
         
@@ -70,8 +75,6 @@ class Anotai:
         if os.path.exists(json_path):
             os.remove(json_path)
         
-        # Clear selection if the deleted file was active
-        # Limpa a seleção se o ficheiro apagado estava ativo
         if st.session_state.get('active_file') == file_id:
             del st.session_state.active_file
             del st.session_state.active_name
@@ -84,6 +87,7 @@ class Anotai:
         for f in files_sorted:
             parts = f.replace(".wav", "").split("_")
             if len(parts) >= 2:
+                # Local formatting / Formatação local
                 date_val = f"{parts[0][6:8]}/{parts[0][4:6]}/{parts[0][:4]}"
                 time_val = f"{parts[1][:2]}:{parts[1][2:4]}"
                 name_val = " ".join(parts[2:]).capitalize() if len(parts) > 2 else "Sem Nome"
@@ -120,17 +124,17 @@ class Anotai:
         return raw_text, result_text, False
 
 def main():
-    st.set_page_config(page_title="Anotai - Gestão", page_icon="🎙️", layout="wide")
+    st.set_page_config(page_title="Anotai - BR Time", page_icon="🎙️", layout="wide")
     app = Anotai()
 
-    st.title("🎙️ Anotai - Gestão de Dados")
+    st.title("🎙️ Anotai - Timezone Brasil")
     
     t_app, t_config = st.tabs(["🚀 Aplicativo", "⚙️ Configurações"])
 
     with t_app:
         st.subheader("🔴 Nova Gravação")
         m_name = st.text_input("Título da Reunião:", key="main_title")
-        audio_out = mic_recorder(start_prompt="Gravar", stop_prompt="Salvar", key='rec_v9')
+        audio_out = mic_recorder(start_prompt="Gravar", stop_prompt="Salvar", key='rec_v10')
         
         if audio_out:
             if st.session_state.get('last_h') != hash(audio_out['bytes']):
@@ -139,7 +143,7 @@ def main():
                 st.rerun()
 
         st.divider()
-        st.subheader("📁 Histórico")
+        st.subheader("📁 Histórico (Horário de Brasília)")
         reunioes = app.list_recordings_detailed()
         
         for r in reunioes:
@@ -147,12 +151,10 @@ def main():
             c1.write(r['nome'])
             c2.write(r['data_hora'])
             
-            # Process Button / Botão Processar
             if c3.button("Processar ⚙️", key=f"btn_{r['id']}"):
                 st.session_state.active_file = r['id']
                 st.session_state.active_name = r['nome']
             
-            # Delete Button / Botão Apagar
             if c4.button("Apagar 🗑️", key=f"del_{r['id']}"):
                 app.delete_recording(r['id'])
                 st.rerun()
@@ -173,7 +175,7 @@ def main():
         n_user = st.text_area("User Script:", value=curr["user_script"], height=200)
         if st.button("💾 Salvar Configurações"):
             app.save_config({"system_prompt": n_sys, "user_script": n_user})
-            st.success("Configurações atualizadas!")
+            st.success("Salvo com sucesso!")
 
 if __name__ == "__main__":
     main()
