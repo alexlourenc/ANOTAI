@@ -6,35 +6,50 @@ from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Anotai Class - Phase 7: Cloud Deployment Ready
-# Classe Anotai - Fase 7: Pronto para Implantação em Nuvem
+# Anotai Class - Phase 9: File Management and Deletion
+# Classe Anotai - Fase 9: Gestão de Ficheiros e Exclusão
 class Anotai:
     def __init__(self):
-        # Load .env only if file exists (Local dev)
-        # Carrega .env apenas se o arquivo existir (Desenvolvimento local)
         if os.path.exists(".env"):
             load_dotenv()
         
-        # Priority for Streamlit Secrets (Cloud) then Environment Variables
-        # Prioridade para Streamlit Secrets (Nuvem) depois Variáveis de Ambiente
-        self.api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-        
+        self.api_key = None
+        try:
+            if "OPENAI_API_KEY" in st.secrets:
+                self.api_key = st.secrets["OPENAI_API_KEY"]
+        except:
+            self.api_key = os.getenv("OPENAI_API_KEY")
+
         if not self.api_key:
-            st.error("ERRO: API Key não configurada. Adicione em Secrets (Cloud) ou no .env (Local).")
+            st.error("🔑 API Key não encontrada!")
             st.stop()
         
         self.client = OpenAI(api_key=self.api_key)
         self.base_dir = "data"
         self.recordings_dir = os.path.join(self.base_dir, "recordings")
         self.outputs_dir = os.path.join(self.base_dir, "outputs")
+        self.config_file = os.path.join(self.base_dir, "ai_config.json")
         self._setup_environment()
 
     def _setup_environment(self):
-        # Ensure directories exist in the ephemeral cloud storage
-        # Garante que os diretórios existam no armazenamento efêmero da nuvem
         for path in [self.base_dir, self.recordings_dir, self.outputs_dir]:
             if not os.path.exists(path):
                 os.makedirs(path)
+        
+        if not os.path.exists(self.config_file):
+            default_config = {
+                "system_prompt": "Você é um assistente sênior de TI especializado em engenharia de dados.",
+                "user_script": "Analise a transcrição abaixo e gere três seções claras:\n1. PAUTA: Tópicos principais.\n2. CHAT: Resumo executivo.\n3. JIRA STORY: User Stories técnicas."
+            }
+            self.save_config(default_config)
+
+    def load_config(self):
+        with open(self.config_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_config(self, config_data):
+        with open(self.config_file, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=4)
 
     def save_recording(self, meeting_name, audio_bytes):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -45,11 +60,26 @@ class Anotai:
             f.write(audio_bytes)
         return filename
 
+    def delete_recording(self, file_id):
+        # Delete audio and json cache / Apaga o áudio e o cache json
+        audio_path = os.path.join(self.recordings_dir, file_id)
+        json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
+        
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        if os.path.exists(json_path):
+            os.remove(json_path)
+        
+        # Clear selection if the deleted file was active
+        # Limpa a seleção se o ficheiro apagado estava ativo
+        if st.session_state.get('active_file') == file_id:
+            del st.session_state.active_file
+            del st.session_state.active_name
+
     def list_recordings_detailed(self):
         if not os.path.exists(self.recordings_dir): return []
         files = [f for f in os.listdir(self.recordings_dir) if f.endswith(".wav")]
         files_sorted = sorted(files, reverse=True)
-        
         details = []
         for f in files_sorted:
             parts = f.replace(".wav", "").split("_")
@@ -62,23 +92,24 @@ class Anotai:
 
     def run_full_process(self, file_id):
         json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
-        
         if os.path.exists(json_path):
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return data["raw"], data["result"], True
 
         file_path = os.path.join(self.recordings_dir, file_id)
+        config = self.load_config()
+
         with open(file_path, "rb") as audio_file:
             transcript = self.client.audio.transcriptions.create(
                 model="whisper-1", file=audio_file, language="pt"
             )
             raw_text = transcript.text
 
-        prompt = f"Gere PAUTA, CHAT e JIRA STORY para: {raw_text}"
+        prompt = f"{config['user_script']}\n\nTranscrição: {raw_text}"
         response = self.client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": "Você é um assistente sênior."},
+            messages=[{"role": "system", "content": config['system_prompt']},
                       {"role": "user", "content": prompt}]
         )
         result_text = response.choices[0].message.content
@@ -89,50 +120,60 @@ class Anotai:
         return raw_text, result_text, False
 
 def main():
-    st.set_page_config(page_title="Anotai - Cloud Online", page_icon="🎙️", layout="wide")
+    st.set_page_config(page_title="Anotai - Gestão", page_icon="🎙️", layout="wide")
     app = Anotai()
 
-    st.title("🎙️ Anotai - Gestão Inteligente")
+    st.title("🎙️ Anotai - Gestão de Dados")
     
-    # Simple warning about persistence on Cloud
-    # Aviso simples sobre persistência na Nuvem
-    if not os.path.exists(".env"):
-        st.sidebar.warning("⚠️ Nota: Em servidores gratuitos, os arquivos podem ser limpos após um período de inatividade.")
+    t_app, t_config = st.tabs(["🚀 Aplicativo", "⚙️ Configurações"])
 
-    st.subheader("🔴 Nova Gravação")
-    m_name = st.text_input("Título da Reunião:")
-    audio_out = mic_recorder(start_prompt="Gravar", stop_prompt="Salvar", key='recorder_cloud')
-    
-    if audio_out:
-        audio_hash = hash(audio_out['bytes'])
-        if st.session_state.get('last_h') != audio_hash:
-            app.save_recording(m_name, audio_out['bytes'])
-            st.session_state.last_h = audio_hash
-            st.rerun()
-
-    st.divider()
-
-    # Table
-    st.subheader("📁 Histórico")
-    reunioes = app.list_recordings_detailed()
-    for r in reunioes:
-        c1, c2, c3 = st.columns([3, 2, 1])
-        c1.write(r['nome'])
-        c2.write(r['data_hora'])
-        if c3.button("Processar ⚙️", key=f"btn_{r['id']}"):
-            st.session_state.active_file = r['id']
-            st.session_state.active_name = r['nome']
-
-    # Results
-    if 'active_file' in st.session_state:
-        st.divider()
-        raw, result, is_cached = app.run_full_process(st.session_state.active_file)
+    with t_app:
+        st.subheader("🔴 Nova Gravação")
+        m_name = st.text_input("Título da Reunião:", key="main_title")
+        audio_out = mic_recorder(start_prompt="Gravar", stop_prompt="Salvar", key='rec_v9')
         
-        t1, t2 = st.tabs(["📝 Inteligência", "📄 Transcrição"])
-        with t1: 
-            if is_cached: st.caption("♻️ Recuperado do cache local.")
-            st.markdown(result)
-        with t2: st.text_area("Bruto:", raw, height=200)
+        if audio_out:
+            if st.session_state.get('last_h') != hash(audio_out['bytes']):
+                app.save_recording(m_name, audio_out['bytes'])
+                st.session_state.last_h = hash(audio_out['bytes'])
+                st.rerun()
+
+        st.divider()
+        st.subheader("📁 Histórico")
+        reunioes = app.list_recordings_detailed()
+        
+        for r in reunioes:
+            c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+            c1.write(r['nome'])
+            c2.write(r['data_hora'])
+            
+            # Process Button / Botão Processar
+            if c3.button("Processar ⚙️", key=f"btn_{r['id']}"):
+                st.session_state.active_file = r['id']
+                st.session_state.active_name = r['nome']
+            
+            # Delete Button / Botão Apagar
+            if c4.button("Apagar 🗑️", key=f"del_{r['id']}"):
+                app.delete_recording(r['id'])
+                st.rerun()
+
+        if 'active_file' in st.session_state:
+            st.divider()
+            raw, result, is_cached = app.run_full_process(st.session_state.active_file)
+            res_t1, res_t2 = st.tabs(["📋 Resultado", "📄 Transcrição"])
+            with res_t1: 
+                if is_cached: st.caption("♻️ Recuperado do cache local.")
+                st.markdown(result)
+            with res_t2: st.text_area("Original:", raw, height=200)
+
+    with t_config:
+        st.subheader("🛠️ Script da IA")
+        curr = app.load_config()
+        n_sys = st.text_area("System Prompt:", value=curr["system_prompt"])
+        n_user = st.text_area("User Script:", value=curr["user_script"], height=200)
+        if st.button("💾 Salvar Configurações"):
+            app.save_config({"system_prompt": n_sys, "user_script": n_user})
+            st.success("Configurações atualizadas!")
 
 if __name__ == "__main__":
     main()
