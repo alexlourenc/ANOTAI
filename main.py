@@ -3,12 +3,14 @@ import streamlit as st
 import datetime
 import json
 import pytz
+import pandas as pd
+import io
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Anotai Class - Phase 17: Exclusive Admin User Registration
-# Classe Anotai - Fase 17: Cadastro de Usuários Exclusivo para Administrador
+# Anotai Class - Phase 21: Enhanced UI and Data Engineering Integration
+# Classe Anotai - Fase 21: UI Aprimorada e Integração de Engenharia de Dados
 class Anotai:
     def __init__(self):
         if os.path.exists(".env"):
@@ -34,30 +36,33 @@ class Anotai:
         self._setup_environment()
 
     def _setup_environment(self):
+        # Create directories if they don't exist / Cria diretórios se não existirem
         for path in [self.base_dir, self.recordings_dir, self.outputs_dir]:
             if not os.path.exists(path):
                 os.makedirs(path)
         
         if not os.path.exists(self.users_file):
-            # First Admin Creation / Criação do primeiro Admin
             self.save_users({
                 "admin": {
                     "password": "admin123", 
                     "role": "Administrador",
-                    "system_prompt": "Você é um assistente sênior de TI especializado em engenharia de dados.",
-                    "user_script": "Analise a transcrição abaixo e gere três seções claras:\n1. PAUTA\n2. CHAT\n3. JIRA STORY"
+                    "system_prompt": "Você é um assistente sênior.",
+                    "user_script": "Gere PAUTA, CHAT e JIRA STORY."
                 }
             })
 
     def load_users(self):
+        # Load user database / Carrega banco de dados de usuários
         with open(self.users_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def save_users(self, users_data):
+        # Save user database / Salva banco de dados de usuários
         with open(self.users_file, "w", encoding="utf-8") as f:
             json.dump(users_data, f, indent=4, ensure_ascii=False)
 
     def save_recording(self, meeting_name, audio_bytes, user_name):
+        # Save audio file with timestamp / Salva arquivo de áudio com timestamp
         now_br = datetime.datetime.now(self.tz)
         timestamp = now_br.strftime("%Y%m%d_%H%M%S")
         clean_name = meeting_name.lower().replace(" ", "_") or "reuniao"
@@ -68,12 +73,14 @@ class Anotai:
         return filename
 
     def delete_recording(self, file_id):
+        # Delete audio and JSON output / Deleta áudio e saída JSON
         audio_path = os.path.join(self.recordings_dir, file_id)
         json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
         if os.path.exists(audio_path): os.remove(audio_path)
         if os.path.exists(json_path): os.remove(json_path)
 
     def list_recordings_detailed(self, user_name, user_role):
+        # List detailed recordings based on role / Lista gravações detalhadas baseada no perfil
         if not os.path.exists(self.recordings_dir): return []
         files = [f for f in os.listdir(self.recordings_dir) if f.endswith(".wav")]
         files_sorted = sorted(files, reverse=True)
@@ -86,15 +93,15 @@ class Anotai:
                     date_val = f"{parts[0][6:8]}/{parts[0][4:6]}/{parts[0][:4]}"
                     time_val = f"{parts[1][:2]}:{parts[1][2:4]}"
                     name_val = " ".join(parts[2:]).capitalize() if len(parts) > 2 else "Sem Nome"
-                    details.append({
-                        "id": f, "nome": name_val, "data_hora": f"{date_val} {time_val}", "autor": owner
-                    })
+                    details.append({"id": f, "nome": name_val, "data_hora": f"{date_val} {time_val}", "autor": owner})
         return details
 
     def run_full_process(self, file_id, owner_name):
+        # Process audio with OpenAI and owner script / Processa áudio com OpenAI e script do dono
         json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
         users = self.load_users()
         u_data = users.get(owner_name, {})
+        
         sys_p = u_data.get("system_prompt") or "Você é um assistente sênior."
         usr_s = u_data.get("user_script") or "Resuma a transcrição a seguir."
 
@@ -118,9 +125,28 @@ class Anotai:
             json.dump({"raw": raw_text, "result": result_text}, f, ensure_ascii=False, indent=4)
         return raw_text, result_text, False
 
+    def convert_to_jira_csv(self, ai_text):
+        # Format AI output for Jira CSV import / Formata saída da IA para importação CSV no Jira
+        df = pd.DataFrame({
+            "Summary": ["Anotai Story Export"],
+            "Description": [ai_text],
+            "Issue Type": ["Story"]
+        })
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        return csv_buffer.getvalue()
+
 def main():
-    st.set_page_config(page_title="Anotai - Gestão Admin", page_icon="🎙️", layout="wide")
+    st.set_page_config(page_title="Anotai - Gravação Inteligente", page_icon="🎙️", layout="wide")
     app = Anotai()
+
+    # Custom CSS for pulsing record indicator / CSS para indicador de gravação pulsante
+    st.markdown("""
+        <style>
+        .stButton>button { border-radius: 12px; }
+        .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+        </style>
+    """, unsafe_allow_html=True)
 
     if "logged_in" not in st.session_state:
         st.title("🔐 Login - Anotai")
@@ -134,23 +160,35 @@ def main():
             else: st.error("Acesso negado.")
     else:
         st.sidebar.title(f"👤 {st.session_state.user_name}")
-        st.sidebar.info(f"Perfil: {st.session_state.user_role}")
         if st.sidebar.button("Sair (Logout)"):
             st.session_state.clear()
             st.rerun()
 
-        # Tabs restricted by role / Abas restritas por perfil
         tabs_list = ["🚀 Aplicativo"]
         if st.session_state.user_role == "Administrador":
-            tabs_list.append("👥 Gestão de Usuários")
+            tabs_list.append("👥 Gestão e Scripts")
         
         tabs = st.tabs(tabs_list)
 
-        # APPLICATION TAB
         with tabs[0]:
-            st.subheader("🔴 Nova Gravação")
-            m_name = st.text_input("Título da Reunião:")
-            audio_out = mic_recorder(start_prompt="Gravar", stop_prompt="Salvar", key='rec_v17_final')
+            st.subheader("🔴 Gravação de Reunião")
+            m_name = st.text_input("Título da Reunião:", placeholder="Ex: Daily Scrum")
+            
+            # Intuitive Recorder UI / UI de Gravação Intuitiva
+            col_rec1, col_rec2 = st.columns([1, 2])
+            with col_rec1:
+                audio_out = mic_recorder(
+                    start_prompt="🎤 Iniciar Gravação",
+                    stop_prompt="💾 Parar e Salvar",
+                    key='rec_v21_final'
+                )
+            
+            with col_rec2:
+                if audio_out:
+                    st.success("✅ Áudio capturado! Clique em 'Cérebro' na lista abaixo para analisar.")
+                else:
+                    st.info("Aguardando início da gravação...")
+
             if audio_out:
                 if st.session_state.get('last_h') != hash(audio_out['bytes']):
                     app.save_recording(m_name, audio_out['bytes'], st.session_state.user_name)
@@ -158,78 +196,74 @@ def main():
                     st.rerun()
 
             st.divider()
+            st.subheader("📁 Histórico de Arquivos")
             reunioes = app.list_recordings_detailed(st.session_state.user_name, st.session_state.user_role)
             cols_sizes = [2, 2, 2, 1, 1] if st.session_state.user_role == "Administrador" else [3, 2, 1]
+            
             for r in reunioes:
                 c = st.columns(cols_sizes)
-                c[0].write(r['nome'])
+                c[0].write(f"**{r['nome']}**")
                 c[1].write(r['data_hora'])
                 if st.session_state.user_role == "Administrador":
                     c[2].write(f"👤 {r['autor']}")
-                    if c[3].button("⚙️", key=f"btn_{r['id']}"): 
+                    if c[3].button("🧠", key=f"btn_{r['id']}"): 
                         st.session_state.active_file, st.session_state.active_owner = r['id'], r['autor']
                     if c[4].button("🗑️", key=f"del_{r['id']}"):
                         app.delete_recording(r['id'])
                         st.rerun()
                 else:
-                    if c[2].button("⚙️", key=f"btn_{r['id']}"): 
+                    if c[2].button("🧠", key=f"btn_{r['id']}"): 
                         st.session_state.active_file, st.session_state.active_owner = r['id'], r['autor']
 
             if 'active_file' in st.session_state:
                 st.divider()
                 raw, result, is_cached = app.run_full_process(st.session_state.active_file, st.session_state.active_owner)
+                
+                # Export Button / Botão de Exportação
+                jira_csv = app.convert_to_jira_csv(result)
+                st.download_button("📥 Baixar Jira CSV", data=jira_csv, file_name=f"jira_{st.session_state.active_file}.csv")
+
                 res_tab1, res_tab2 = st.tabs(["📋 Inteligência Artificial", "📄 Transcrição na Íntegra"])
                 with res_tab1:
-                    if is_cached: st.caption("♻️ Recuperado do cache.")
                     st.markdown(result)
                 with res_tab2:
                     st.text_area("Original:", value=raw, height=300)
 
-        # ADMIN TAB (Registration and User Scripts)
         if st.session_state.user_role == "Administrador":
             with tabs[1]:
-                st.subheader("👥 Cadastro e Gestão de Novos Usuários")
+                st.subheader("👥 Gestão de Usuários e Edição de Scripts")
                 users = app.load_users()
-                
-                # Registration/Edit Form / Formulário de Cadastro/Edição
-                u_to_edit = st.selectbox("Selecione um usuário para editar ou 'Novo Usuário':", ["Novo Usuário"] + list(users.keys()))
-                
+                u_to_edit = st.selectbox("Selecione o Usuário para Editar/Criar:", ["Novo Usuário"] + list(users.keys()))
                 is_new = u_to_edit == "Novo Usuário"
                 
-                with st.form("user_management_form"):
+                with st.form("edit_user_form"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        nu = st.text_input("Usuário (Login)", value="" if is_new else u_to_edit, disabled=not is_new)
+                        nu = st.text_input("Nome do Usuário", value="" if is_new else u_to_edit, disabled=not is_new)
                         np = st.text_input("Senha", type="password", value="" if is_new else users[u_to_edit]["password"])
                     with col2:
-                        nr = st.selectbox("Perfil de Acesso", ["Usuário", "Administrador"], 
-                                          index=0 if is_new or users[u_to_edit]["role"] == "Usuário" else 1)
+                        nr = st.selectbox("Perfil", ["Usuário", "Administrador"], index=0 if is_new or users[u_to_edit]["role"] == "Usuário" else 1)
                     
                     st.divider()
-                    st.write("🤖 **Configuração do Script de IA Individual**")
-                    n_sys = st.text_area("System Prompt (Personalidade):", 
-                                         value="" if is_new else users[u_to_edit].get("system_prompt", ""))
-                    n_usr = st.text_area("User Script (Instruções de Saída):", 
-                                         value="" if is_new else users[u_to_edit].get("user_script", ""), height=150)
+                    st.write("📝 **Personalização do Script de IA**")
+                    n_sys = st.text_area("System Prompt (Personalidade):", value="" if is_new else users[u_to_edit].get("system_prompt", ""))
+                    n_usr = st.text_area("User Script (Instruções):", value="" if is_new else users[u_to_edit].get("user_script", ""), height=200)
                     
-                    if st.form_submit_button("💾 Salvar Cadastro/Alteração"):
+                    if st.form_submit_button("💾 Salvar Alterações"):
                         if nu and np:
                             users[nu] = {"password": np, "role": nr, "system_prompt": n_sys, "user_script": n_usr}
                             app.save_users(users)
-                            st.success(f"Usuário {nu} cadastrado/atualizado com sucesso!")
+                            st.success(f"Configurações para {nu} salvas!")
                             st.rerun()
-                        else:
-                            st.error("Por favor, preencha o Usuário e a Senha.")
 
                 st.divider()
-                st.write("### Lista de Usuários Ativos")
-                for username, info in users.items():
-                    c_list = st.columns([3, 2, 1])
-                    c_list[0].write(f"**{username}** ({info['role']})")
-                    c_list[1].write("✅ Script Configurado" if info.get("user_script") else "⚠️ Script Padrão")
-                    if username != st.session_state.user_name:
-                        if c_list[2].button("🗑️ Excluir", key=f"del_user_{username}"):
-                            del users[username]
+                for u, info in users.items():
+                    c_list = st.columns([2, 2, 1])
+                    c_list[0].write(f"**{u}** ({info['role']})")
+                    c_list[1].write("✅ Customizado" if info.get("user_script") else "⚠️ Padrão")
+                    if u != st.session_state.user_name:
+                        if c_list[2].button("🗑️", key=f"del_u_{u}"):
+                            del users[u]
                             app.save_users(users)
                             st.rerun()
 
