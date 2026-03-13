@@ -23,8 +23,8 @@ from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Anotai Class - Phase 39: Cloud Graceful Degradation
-# Classe Anotai - Fase 39: Degradação Graciosa na Nuvem
+# Anotai Class - Phase 40: Cloud Microphone Permissions
+# Classe Anotai - Fase 40: Permissões de Microfone na Nuvem
 class Anotai:
     def __init__(self):
         if os.path.exists(".env"):
@@ -181,6 +181,9 @@ def main():
         with tabs[0]:
             st.subheader("🔴 Gravação de Reunião")
             m_name = st.text_input("Título da Reunião:", placeholder="Ex: Daily Scrum")
+            
+            # Browser microphone warning / Aviso de microfone do navegador
+            st.info("⚠️ Se o botão não funcionar, clique no ícone de cadeado 🔒 na barra de endereços do navegador e **Permita** o uso do microfone.")
             
             col_rec1, col_rec2 = st.columns([1, 2])
             with col_rec1:
