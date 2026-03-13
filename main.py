@@ -5,7 +5,7 @@ import json
 import pytz
 import pandas as pd
 import io
-from fpdf import FPDF
+#from fpdf import FPDF
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
