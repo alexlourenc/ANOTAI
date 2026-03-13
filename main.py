@@ -5,38 +5,26 @@ import json
 import pytz
 import pandas as pd
 import io
-import subprocess
-import sys
 
-# --- FASE 38: AUTO-INSTALL & SAFE IMPORT ---
-# Força a instalação da biblioteca FPDF2 no ambiente Cloud caso não exista
+# Safe FPDF Import without Subprocess / Importação segura do FPDF sem Subprocess
 try:
     from fpdf import FPDF
 except ImportError:
-    st.warning("🔄 Instalando dependências de PDF no servidor... Aguarde um momento.")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "fpdf2"])
-    try:
-        from fpdf import FPDF
-        st.success("✅ Biblioteca FPDF2 instalada com sucesso! A página será recarregada.")
-        st.rerun()
-    except ImportError:
-        st.error("❌ Falha crítica: Não foi possível instalar fpdf2 no Cloud. A geração de PDF está desativada.")
-        # Classe falsa (Mock) para impedir que o app quebre
-        class FPDF:
-            def __init__(self, *args, **kwargs): pass
-            def add_page(self): pass
-            def set_font(self, *args, **kwargs): pass
-            def cell(self, *args, **kwargs): pass
-            def ln(self, *args, **kwargs): pass
-            def multi_cell(self, *args, **kwargs): pass
-            def output(self): return b""
+    class FPDF:
+        def __init__(self, *args, **kwargs): pass
+        def add_page(self): pass
+        def set_font(self, *args, **kwargs): pass
+        def cell(self, *args, **kwargs): pass
+        def ln(self, *args, **kwargs): pass
+        def multi_cell(self, *args, **kwargs): pass
+        def output(self): return None
 
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Anotai Class - Phase 38: Cloud Stability Fix
-# Classe Anotai - Fase 38: Correção de Estabilidade no Cloud
+# Anotai Class - Phase 39: Cloud Graceful Degradation
+# Classe Anotai - Fase 39: Degradação Graciosa na Nuvem
 class Anotai:
     def __init__(self):
         if os.path.exists(".env"):
@@ -62,6 +50,7 @@ class Anotai:
         self._setup_environment()
 
     def _setup_environment(self):
+        # Create directories for data storage / Cria diretórios para armazenamento
         for path in [self.base_dir, self.recordings_dir, self.outputs_dir]:
             if not os.path.exists(path):
                 os.makedirs(path)
@@ -150,21 +139,17 @@ class Anotai:
         return csv_buffer.getvalue()
 
     def generate_pdf(self, title, content):
+        # Generates PDF or returns None if library is missing / Gera PDF ou retorna None se faltar biblioteca
         pdf = FPDF()
+        if pdf.output() is None:
+            return None
+            
         pdf.add_page()
-        # Fallback to standard Helvetica to avoid font loading errors in Cloud
-        # Volta para a Helvetica padrão para evitar erros de fonte no Cloud
-        pdf.set_font("helvetica", 'B', 16)
+        pdf.set_font("Arial", 'B', 16)
         pdf.cell(0, 10, f"Anotai App - {title}", ln=True, align='C')
         pdf.ln(10)
-        pdf.set_font("helvetica", size=11)
-        
-        try:
-            clean_content = content.encode('latin-1', 'replace').decode('latin-1')
-        except:
-            clean_content = content
-            
-        pdf.multi_cell(0, 10, clean_content)
+        pdf.set_font("Arial", size=11)
+        pdf.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
         return pdf.output()
 
 def main():
@@ -246,15 +231,17 @@ def main():
                 
                 with exp_col2:
                     pdf_ia = app.generate_pdf("Resultado Inteligência Artificial", result)
-                    if pdf_ia: # Prevent error if mock class returned empty bytes
+                    if pdf_ia is not None:
                         st.download_button("📄 PDF (IA)", data=bytes(pdf_ia), file_name=f"IA_{st.session_state.active_file}.pdf", mime="application/pdf")
                     else:
-                        st.warning("Geração de PDF indisponível.")
+                        st.info("⚠️ Biblioteca fpdf2 ausente no servidor.")
                 
                 with exp_col3:
                     pdf_raw = app.generate_pdf("Transcrição Completa", raw)
-                    if pdf_raw:
+                    if pdf_raw is not None:
                         st.download_button("📄 PDF (Íntegra)", data=bytes(pdf_raw), file_name=f"INTEGRA_{st.session_state.active_file}.pdf", mime="application/pdf")
+                    else:
+                        st.info("⚠️ Biblioteca fpdf2 ausente no servidor.")
 
                 res_tab1, res_tab2 = st.tabs(["📋 Inteligência Artificial", "📄 Transcrição na Íntegra"])
                 with res_tab1:
