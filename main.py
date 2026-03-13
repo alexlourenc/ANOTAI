@@ -5,12 +5,13 @@ import json
 import pytz
 import pandas as pd
 import io
+from fpdf import FPDF
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Anotai Class - Phase 21: Enhanced UI and Data Engineering Integration
-# Classe Anotai - Fase 21: UI Aprimorada e Integração de Engenharia de Dados
+# Anotai Class - Phase 22: Dual PDF Export (AI & Full Transcript)
+# Classe Anotai - Fase 22: Exportação Dupla de PDF (IA e Transcrição Íntegra)
 class Anotai:
     def __init__(self):
         if os.path.exists(".env"):
@@ -36,7 +37,7 @@ class Anotai:
         self._setup_environment()
 
     def _setup_environment(self):
-        # Create directories if they don't exist / Cria diretórios se não existirem
+        # Create directories for data storage / Cria diretórios para armazenamento
         for path in [self.base_dir, self.recordings_dir, self.outputs_dir]:
             if not os.path.exists(path):
                 os.makedirs(path)
@@ -52,17 +53,14 @@ class Anotai:
             })
 
     def load_users(self):
-        # Load user database / Carrega banco de dados de usuários
         with open(self.users_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def save_users(self, users_data):
-        # Save user database / Salva banco de dados de usuários
         with open(self.users_file, "w", encoding="utf-8") as f:
             json.dump(users_data, f, indent=4, ensure_ascii=False)
 
     def save_recording(self, meeting_name, audio_bytes, user_name):
-        # Save audio file with timestamp / Salva arquivo de áudio com timestamp
         now_br = datetime.datetime.now(self.tz)
         timestamp = now_br.strftime("%Y%m%d_%H%M%S")
         clean_name = meeting_name.lower().replace(" ", "_") or "reuniao"
@@ -73,14 +71,12 @@ class Anotai:
         return filename
 
     def delete_recording(self, file_id):
-        # Delete audio and JSON output / Deleta áudio e saída JSON
         audio_path = os.path.join(self.recordings_dir, file_id)
         json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
         if os.path.exists(audio_path): os.remove(audio_path)
         if os.path.exists(json_path): os.remove(json_path)
 
     def list_recordings_detailed(self, user_name, user_role):
-        # List detailed recordings based on role / Lista gravações detalhadas baseada no perfil
         if not os.path.exists(self.recordings_dir): return []
         files = [f for f in os.listdir(self.recordings_dir) if f.endswith(".wav")]
         files_sorted = sorted(files, reverse=True)
@@ -97,11 +93,9 @@ class Anotai:
         return details
 
     def run_full_process(self, file_id, owner_name):
-        # Process audio with OpenAI and owner script / Processa áudio com OpenAI e script do dono
         json_path = os.path.join(self.outputs_dir, file_id.replace(".wav", ".json"))
         users = self.load_users()
         u_data = users.get(owner_name, {})
-        
         sys_p = u_data.get("system_prompt") or "Você é um assistente sênior."
         usr_s = u_data.get("user_script") or "Resuma a transcrição a seguir."
 
@@ -126,27 +120,27 @@ class Anotai:
         return raw_text, result_text, False
 
     def convert_to_jira_csv(self, ai_text):
-        # Format AI output for Jira CSV import / Formata saída da IA para importação CSV no Jira
-        df = pd.DataFrame({
-            "Summary": ["Anotai Story Export"],
-            "Description": [ai_text],
-            "Issue Type": ["Story"]
-        })
+        df = pd.DataFrame({"Summary": ["Anotai Export"], "Description": [ai_text], "Issue Type": ["Story"]})
         csv_buffer = io.StringIO()
         df.to_csv(csv_buffer, index=False)
         return csv_buffer.getvalue()
 
+    def generate_pdf(self, title, content):
+        # PDF Generation logic using FPDF / Lógica de geração de PDF usando FPDF
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, f"Anotai App - {title}", ln=True, align='C')
+        pdf.ln(10)
+        pdf.set_font("Arial", size=11)
+        # Using multi_cell to handle text wrapping / Usando multi_cell para quebra automática de linha
+        # Encoding cleanup for special characters / Limpeza de codificação para caracteres especiais
+        pdf.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
+        return pdf.output()
+
 def main():
     st.set_page_config(page_title="Anotai - Gravação Inteligente", page_icon="🎙️", layout="wide")
     app = Anotai()
-
-    # Custom CSS for pulsing record indicator / CSS para indicador de gravação pulsante
-    st.markdown("""
-        <style>
-        .stButton>button { border-radius: 12px; }
-        .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-        </style>
-    """, unsafe_allow_html=True)
 
     if "logged_in" not in st.session_state:
         st.title("🔐 Login - Anotai")
@@ -174,20 +168,15 @@ def main():
             st.subheader("🔴 Gravação de Reunião")
             m_name = st.text_input("Título da Reunião:", placeholder="Ex: Daily Scrum")
             
-            # Intuitive Recorder UI / UI de Gravação Intuitiva
             col_rec1, col_rec2 = st.columns([1, 2])
             with col_rec1:
-                audio_out = mic_recorder(
-                    start_prompt="🎤 Iniciar Gravação",
-                    stop_prompt="💾 Parar e Salvar",
-                    key='rec_v21_final'
-                )
+                audio_out = mic_recorder(start_prompt="🎤 Iniciar Gravação", stop_prompt="💾 Parar e Salvar", key='rec_v22')
             
             with col_rec2:
                 if audio_out:
-                    st.success("✅ Áudio capturado! Clique em 'Cérebro' na lista abaixo para analisar.")
+                    st.success("✅ Áudio capturado!")
                 else:
-                    st.info("Aguardando início da gravação...")
+                    st.info("Pronto para gravar.")
 
             if audio_out:
                 if st.session_state.get('last_h') != hash(audio_out['bytes']):
@@ -219,9 +208,21 @@ def main():
                 st.divider()
                 raw, result, is_cached = app.run_full_process(st.session_state.active_file, st.session_state.active_owner)
                 
-                # Export Button / Botão de Exportação
-                jira_csv = app.convert_to_jira_csv(result)
-                st.download_button("📥 Baixar Jira CSV", data=jira_csv, file_name=f"jira_{st.session_state.active_file}.csv")
+                # PDF and Jira Export Section / Seção de Exportação PDF e Jira
+                st.write("### 📤 Opções de Exportação")
+                exp_col1, exp_col2, exp_col3 = st.columns(3)
+                
+                with exp_col1:
+                    jira_csv = app.convert_to_jira_csv(result)
+                    st.download_button("📥 Jira CSV", data=jira_csv, file_name=f"jira_{st.session_state.active_file}.csv")
+                
+                with exp_col2:
+                    pdf_ia = app.generate_pdf("Resultado Inteligência Artificial", result)
+                    st.download_button("📄 PDF (IA)", data=bytes(pdf_ia), file_name=f"IA_{st.session_state.active_file}.pdf", mime="application/pdf")
+                
+                with exp_col3:
+                    pdf_raw = app.generate_pdf("Transcrição Completa", raw)
+                    st.download_button("📄 PDF (Íntegra)", data=bytes(pdf_raw), file_name=f"INTEGRA_{st.session_state.active_file}.pdf", mime="application/pdf")
 
                 res_tab1, res_tab2 = st.tabs(["📋 Inteligência Artificial", "📄 Transcrição na Íntegra"])
                 with res_tab1:
@@ -229,31 +230,31 @@ def main():
                 with res_tab2:
                     st.text_area("Original:", value=raw, height=300)
 
+        # Admin Tab Logic remains preserved / Lógica da aba Admin preservada
         if st.session_state.user_role == "Administrador":
             with tabs[1]:
                 st.subheader("👥 Gestão de Usuários e Edição de Scripts")
                 users = app.load_users()
-                u_to_edit = st.selectbox("Selecione o Usuário para Editar/Criar:", ["Novo Usuário"] + list(users.keys()))
+                u_to_edit = st.selectbox("Selecione o Usuário:", ["Novo Usuário"] + list(users.keys()))
                 is_new = u_to_edit == "Novo Usuário"
                 
                 with st.form("edit_user_form"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        nu = st.text_input("Nome do Usuário", value="" if is_new else u_to_edit, disabled=not is_new)
+                        nu = st.text_input("Usuário", value="" if is_new else u_to_edit, disabled=not is_new)
                         np = st.text_input("Senha", type="password", value="" if is_new else users[u_to_edit]["password"])
                     with col2:
                         nr = st.selectbox("Perfil", ["Usuário", "Administrador"], index=0 if is_new or users[u_to_edit]["role"] == "Usuário" else 1)
                     
                     st.divider()
-                    st.write("📝 **Personalização do Script de IA**")
-                    n_sys = st.text_area("System Prompt (Personalidade):", value="" if is_new else users[u_to_edit].get("system_prompt", ""))
-                    n_usr = st.text_area("User Script (Instruções):", value="" if is_new else users[u_to_edit].get("user_script", ""), height=200)
+                    n_sys = st.text_area("System Prompt:", value="" if is_new else users[u_to_edit].get("system_prompt", ""))
+                    n_usr = st.text_area("User Script:", value="" if is_new else users[u_to_edit].get("user_script", ""), height=200)
                     
-                    if st.form_submit_button("💾 Salvar Alterações"):
+                    if st.form_submit_button("💾 Salvar"):
                         if nu and np:
                             users[nu] = {"password": np, "role": nr, "system_prompt": n_sys, "user_script": n_usr}
                             app.save_users(users)
-                            st.success(f"Configurações para {nu} salvas!")
+                            st.success(f"Salvo!")
                             st.rerun()
 
                 st.divider()
