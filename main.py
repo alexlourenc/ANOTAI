@@ -4,7 +4,6 @@ import datetime
 import pytz
 import pandas as pd
 import io
-from fpdf import FPDF
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -189,16 +188,6 @@ class Anotai:
         df.to_csv(csv_buffer, index=False)
         return csv_buffer.getvalue()
 
-    def generate_pdf(self, title, content):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, f"Anotai App - {title}", ln=True, align='C')
-        pdf.ln(10)
-        pdf.set_font("Arial", size=11)
-        pdf.multi_cell(0, 10, content.encode('latin-1', 'replace').decode('latin-1'))
-        return pdf.output()
-
 def main():
     st.set_page_config(page_title="Anotai - Gravação Inteligente", page_icon="🎙️", layout="wide")
     app = Anotai()
@@ -305,13 +294,7 @@ def main():
                         
                         # Opções de Exportação / Export Options
                         st.write("### 📤 Opções de Exportação")
-                        exp_col1, exp_col2, exp_col3 = st.columns(3)
-                        with exp_col1:
-                            st.download_button("📥 Jira CSV", data=app.convert_to_jira_csv(result_text), file_name=f"jira_{st.session_state.active_file}.csv")
-                        with exp_col2:
-                            st.download_button("📄 PDF (IA)", data=bytes(app.generate_pdf("IA", result_text)), file_name=f"IA_{st.session_state.active_file}.pdf")
-                        with exp_col3:
-                            st.download_button("📄 PDF (Íntegra)", data=bytes(app.generate_pdf("Raw", raw_text)), file_name=f"INTEGRA_{st.session_state.active_file}.pdf")
+                        st.download_button("📥 Jira CSV", data=app.convert_to_jira_csv(result_text), file_name=f"jira_{st.session_state.active_file}.csv")
 
                         st.markdown("### Resultado da IA")
                         st.markdown(result_text)
