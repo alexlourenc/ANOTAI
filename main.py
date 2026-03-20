@@ -38,28 +38,39 @@ class Anotai:
         self._setup_environment()
 
     def _setup_environment(self):
-        # Cria admin inicial se o banco estiver vazio / Creates initial admin if DB is empty
+        # Cria admin inicial com a nova estrutura de scripts / Creates initial admin with new scripts structure
         if self.users_col is not None:
             try:
                 if self.users_col.count_documents({}) == 0:
                     self.save_user("admin", {
                         "password": "admin123", 
                         "role": "Administrador",
-                        "system_prompt": "Você é um assistente sênior.",
-                        "user_script": "Gere PAUTA, CHAT e JIRA STORY."
+                        "scripts": {
+                            "Padrão": {
+                                "system_prompt": "Você é um assistente sênior.",
+                                "user_script": "Gere PAUTA, CHAT e JIRA STORY."
+                            }
+                        }
                     })
             except Exception as e:
                 print(f"Erro ao inicializar banco: {e}")
 
     def load_users(self):
-        """Busca todos os usuários no MongoDB / Fetches all users from MongoDB"""
+        """Busca todos os usuários e garante a estrutura de scripts / Fetches all users and ensures scripts structure"""
         if self.users_col is None:
             return {}
         try:
-            # Converte o cursor do Mongo em um dicionário / Converts Mongo cursor to a dictionary
             users_dict = {}
             for u in self.users_col.find({}):
                 username = u['username']
+                # Garante retrocompatibilidade para usuários antigos / Ensures backward compatibility for old users
+                if "scripts" not in u:
+                    u["scripts"] = {
+                        "Geral": {
+                            "system_prompt": u.get("system_prompt", ""),
+                            "user_script": u.get("user_script", "")
+                        }
+                    }
                 users_dict[username] = u
             return users_dict
         except:
@@ -151,8 +162,8 @@ class Anotai:
         except Exception as e:
             return f"Erro na transcrição: {e}"
 
-    def analyze_text(self, file_id, owner_name):
-        """Lê a transcrição do banco e gera a IA / Reads transcription from DB and generates AI"""
+    def analyze_text(self, file_id, owner_name, script_name):
+        """Lê a transcrição e aplica o script selecionado / Reads transcription and applies selected script"""
         doc = self.get_meeting_data(file_id)
         raw_text = doc.get("raw", "")
         
@@ -161,8 +172,13 @@ class Anotai:
 
         users = self.load_users()
         u_data = users.get(owner_name, {})
-        sys_p = u_data.get("system_prompt", "Você é um assistente sênior.")
-        usr_s = u_data.get("user_script", "Resuma a transcrição a seguir.")
+        
+        # Seleciona o script específico do dicionário do usuário / Selects specific script from user dictionary
+        scripts_dict = u_data.get("scripts", {})
+        selected_script = scripts_dict.get(script_name, {})
+        
+        sys_p = selected_script.get("system_prompt", "Você é um assistente sênior.")
+        usr_s = selected_script.get("user_script", "Resuma a transcrição a seguir.")
 
         try:
             response = self.client.chat.completions.create(
@@ -265,7 +281,6 @@ def main():
                 st.divider()
                 st.subheader(f"Gerenciamento: {st.session_state.active_file}")
                 
-                # Busca o status atual no banco / Fetches current status from DB
                 doc = app.get_meeting_data(st.session_state.active_file)
                 raw_text = doc.get("raw", "")
                 result_text = doc.get("result", "")
@@ -285,14 +300,22 @@ def main():
                     # Etapa 2: Análise de IA / Step 2: AI Analysis
                     if not result_text:
                         st.info("A transcrição está pronta para ser analisada pela IA.")
+                        
+                        # Carrega os scripts disponíveis do usuário / Loads available scripts for the user
+                        current_user_data = app.load_users().get(st.session_state.active_owner, {})
+                        available_scripts = current_user_data.get("scripts", {"Geral": {}})
+                        script_choices = list(available_scripts.keys())
+                        
+                        # Menu suspenso para escolher qual script rodar / Dropdown menu to choose which script to run
+                        selected_script_to_run = st.selectbox("Escolha o Perfil de Análise:", script_choices)
+                        
                         if st.button("🤖 Gerar Análise com IA", type="primary"):
                             with st.spinner("Analisando com GPT-4o..."):
-                                app.analyze_text(st.session_state.active_file, st.session_state.active_owner)
+                                app.analyze_text(st.session_state.active_file, st.session_state.active_owner, selected_script_to_run)
                                 st.rerun()
                     else:
                         st.success("✅ Análise de IA concluída.")
                         
-                        # Opções de Exportação / Export Options
                         st.write("### 📤 Opções de Exportação")
                         st.download_button("📥 Jira CSV", data=app.convert_to_jira_csv(result_text), file_name=f"jira_{st.session_state.active_file}.csv")
 
@@ -303,33 +326,52 @@ def main():
             with tabs[1]:
                 st.subheader("👥 Gestão de Usuários e Scripts")
                 users = app.load_users()
-                u_to_edit = st.selectbox("Selecione para Editar:", ["Novo Usuário"] + list(users.keys()))
+                
+                # Seletor de usuário isolado para atualizar a tela rapidamente / Isolated user selector to update screen quickly
+                u_to_edit = st.selectbox("Selecione o Usuário:", ["Novo Usuário"] + list(users.keys()))
                 is_new = u_to_edit == "Novo Usuário"
+                user_info = users.get(u_to_edit, {}) if not is_new else {}
+
+                user_scripts = user_info.get("scripts", {"Geral": {"system_prompt": "", "user_script": ""}})
+                script_options = ["Novo Script"] + list(user_scripts.keys())
+                selected_script_edit = st.selectbox("Selecione o Script para Editar:", script_options)
+                is_new_script = selected_script_edit == "Novo Script"
                 
                 with st.form("edit_user_form"):
                     col1, col2 = st.columns(2)
                     with col1:
                         nu = st.text_input("Usuário", value="" if is_new else u_to_edit, disabled=not is_new)
-                        np = st.text_input("Senha", type="password", value="" if is_new else users[u_to_edit].get("password", ""))
+                        np = st.text_input("Senha", type="password", value="" if is_new else user_info.get("password", ""))
                     with col2:
-                        nr = st.selectbox("Perfil", ["Usuário", "Administrador"], index=0 if is_new or users[u_to_edit].get("role") == "Usuário" else 1)
+                        nr = st.selectbox("Perfil", ["Usuário", "Administrador"], index=0 if is_new or user_info.get("role") == "Usuário" else 1)
                     
                     st.divider()
-                    n_sys = st.text_area("System Prompt:", value="" if is_new else users[u_to_edit].get("system_prompt", ""))
-                    n_usr = st.text_area("User Script:", value="" if is_new else users[u_to_edit].get("user_script", ""), height=200)
+                    st.write("### Configuração do Script")
                     
-                    if st.form_submit_button("💾 Salvar no Banco"):
-                        if nu and np:
-                            app.save_user(nu, {"password": np, "role": nr, "system_prompt": n_sys, "user_script": n_usr})
-                            st.success("Usuário atualizado no MongoDB!")
+                    script_name = st.text_input("Nome do Script (Ex: Reunião, Tarefa):", value="" if is_new_script else selected_script_edit)
+                    current_sys = "" if is_new_script else user_scripts[selected_script_edit].get("system_prompt", "")
+                    current_usr = "" if is_new_script else user_scripts[selected_script_edit].get("user_script", "")
+                    
+                    n_sys = st.text_area("System Prompt:", value=current_sys)
+                    n_usr = st.text_area("User Script:", value=current_usr, height=200)
+                    
+                    if st.form_submit_button("💾 Salvar Usuário e Script"):
+                        if nu and np and script_name:
+                            # Cria uma cópia dos scripts e atualiza com o novo ou editado / Copies scripts and updates with new or edited
+                            updated_scripts = user_scripts.copy()
+                            updated_scripts[script_name] = {"system_prompt": n_sys, "user_script": n_usr}
+                            
+                            app.save_user(nu, {"password": np, "role": nr, "scripts": updated_scripts})
+                            st.success("Dados atualizados no MongoDB!")
                             st.rerun()
 
                 st.divider()
                 st.write("### 📜 Usuários Cadastrados")
                 for u, info in users.items():
                     c_list = st.columns([2, 2, 1])
+                    qtd_scripts = len(info.get('scripts', {}))
                     c_list[0].write(f"**{u}** ({info.get('role', 'N/A')})")
-                    c_list[1].write("✅ Customizado" if info.get("user_script") else "⚠️ Padrão")
+                    c_list[1].write(f"📑 {qtd_scripts} Script(s)")
                     if u != st.session_state.user_name:
                         if c_list[2].button("🗑️", key=f"del_u_{u}"):
                             app.delete_user(u)
