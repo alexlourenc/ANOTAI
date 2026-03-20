@@ -4,6 +4,7 @@ import datetime
 import pytz
 import pandas as pd
 import io
+import tempfile
 from streamlit_mic_recorder import mic_recorder
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -132,21 +133,30 @@ class Anotai:
         return self.meetings_col.find_one({"file_id": file_id}) or {}
 
     def transcribe_audio(self, file_id, owner_name):
-        """Apenas transcreve e salva no banco / Only transcribes and saves to DB"""
+        """Transcreve usando tempfile e salva no banco / Transcribes using tempfile and saves to DB"""
         grid_out = self.fs.find_one({"filename": file_id})
         if not grid_out: 
-            return "Arquivo de áudio não encontrado no banco."
+            return False, "Arquivo de áudio não encontrado no banco de dados."
 
         try:
-            audio_buffer = io.BytesIO(grid_out.read())
-            audio_buffer.name = file_id 
-            
-            transcript = self.client.audio.transcriptions.create(
-                model="whisper-1", 
-                file=audio_buffer, 
-                language="pt"
-            )
-            raw_text = transcript.text
+            # Cria arquivo físico temporário / Creates temporary physical file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_audio:
+                tmp_audio.write(grid_out.read())
+                tmp_path = tmp_audio.name
+
+            try:
+                # Transcrição via arquivo / Transcription via file
+                with open(tmp_path, "rb") as audio_file:
+                    transcript = self.client.audio.transcriptions.create(
+                        model="whisper-1", 
+                        file=audio_file, 
+                        language="pt"
+                    )
+                raw_text = transcript.text
+            finally:
+                # Remove o arquivo temporário após o uso / Removes temporary file after use
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
             self.meetings_col.update_one(
                 {"file_id": file_id},
@@ -158,9 +168,9 @@ class Anotai:
                 }},
                 upsert=True
             )
-            return raw_text
+            return True, raw_text
         except Exception as e:
-            return f"Erro na transcrição: {e}"
+            return False, f"Falha na API da OpenAI (Whisper): {str(e)}"
 
     def analyze_text(self, file_id, owner_name, script_name):
         """Lê a transcrição e aplica o script selecionado / Reads transcription and applies selected script"""
@@ -168,12 +178,12 @@ class Anotai:
         raw_text = doc.get("raw", "")
         
         if not raw_text:
-            return "Erro: Nenhuma transcrição encontrada para analisar."
+            return False, "Erro: Nenhuma transcrição encontrada para analisar."
 
         users = self.load_users()
         u_data = users.get(owner_name, {})
         
-        # Seleciona o script específico do dicionário do usuário / Selects specific script from user dictionary
+        # Seleciona o script específico / Selects specific script
         scripts_dict = u_data.get("scripts", {})
         selected_script = scripts_dict.get(script_name, {})
         
@@ -194,9 +204,9 @@ class Anotai:
                 {"file_id": file_id},
                 {"$set": {"result": result_text}}
             )
-            return result_text
+            return True, result_text
         except Exception as e:
-            return f"Erro na análise: {e}"
+            return False, f"Falha na API da OpenAI (GPT-4o): {str(e)}"
 
     def convert_to_jira_csv(self, ai_text):
         df = pd.DataFrame({"Summary": ["Anotai Export"], "Description": [ai_text], "Issue Type": ["Story"]})
@@ -290,8 +300,11 @@ def main():
                     st.warning("O áudio ainda não foi transcrito.")
                     if st.button("📝 Gerar Transcrição do Áudio", type="primary"):
                         with st.spinner("Transcrevendo áudio..."):
-                            app.transcribe_audio(st.session_state.active_file, st.session_state.active_owner)
-                            st.rerun()
+                            success, msg = app.transcribe_audio(st.session_state.active_file, st.session_state.active_owner)
+                            if success:
+                                st.rerun()
+                            else:
+                                st.error(msg) # Mostra o erro exato na tela em vez de falhar em silêncio
                 else:
                     st.success("✅ Transcrição concluída e salva no banco.")
                     with st.expander("Ver Transcrição Original"):
@@ -301,18 +314,22 @@ def main():
                     if not result_text:
                         st.info("A transcrição está pronta para ser analisada pela IA.")
                         
-                        # Carrega os scripts disponíveis do usuário / Loads available scripts for the user
                         current_user_data = app.load_users().get(st.session_state.active_owner, {})
                         available_scripts = current_user_data.get("scripts", {"Geral": {}})
                         script_choices = list(available_scripts.keys())
                         
-                        # Menu suspenso para escolher qual script rodar / Dropdown menu to choose which script to run
-                        selected_script_to_run = st.selectbox("Escolha o Perfil de Análise:", script_choices)
-                        
-                        if st.button("🤖 Gerar Análise com IA", type="primary"):
-                            with st.spinner("Analisando com GPT-4o..."):
-                                app.analyze_text(st.session_state.active_file, st.session_state.active_owner, selected_script_to_run)
-                                st.rerun()
+                        if not script_choices:
+                            st.warning("Nenhum script configurado para este usuário. Peça ao Administrador para adicionar um.")
+                        else:
+                            selected_script_to_run = st.selectbox("Escolha o Perfil de Análise:", script_choices)
+                            
+                            if st.button("🤖 Gerar Análise com IA", type="primary"):
+                                with st.spinner("Analisando com GPT-4o..."):
+                                    success, msg = app.analyze_text(st.session_state.active_file, st.session_state.active_owner, selected_script_to_run)
+                                    if success:
+                                        st.rerun()
+                                    else:
+                                        st.error(msg) # Mostra o erro exato na tela
                     else:
                         st.success("✅ Análise de IA concluída.")
                         
@@ -327,7 +344,6 @@ def main():
                 st.subheader("👥 Gestão de Usuários e Scripts")
                 users = app.load_users()
                 
-                # Seletor de usuário isolado para atualizar a tela rapidamente / Isolated user selector to update screen quickly
                 u_to_edit = st.selectbox("Selecione o Usuário:", ["Novo Usuário"] + list(users.keys()))
                 is_new = u_to_edit == "Novo Usuário"
                 user_info = users.get(u_to_edit, {}) if not is_new else {}
@@ -355,15 +371,31 @@ def main():
                     n_sys = st.text_area("System Prompt:", value=current_sys)
                     n_usr = st.text_area("User Script:", value=current_usr, height=200)
                     
-                    if st.form_submit_button("💾 Salvar Usuário e Script"):
+                    btn_col1, btn_col2 = st.columns(2)
+                    with btn_col1:
+                        submit_save = st.form_submit_button("💾 Salvar Usuário e Script")
+                    with btn_col2:
+                        submit_delete = st.form_submit_button("🗑️ Excluir Script Selecionado")
+                    
+                    if submit_save:
                         if nu and np and script_name:
-                            # Cria uma cópia dos scripts e atualiza com o novo ou editado / Copies scripts and updates with new or edited
                             updated_scripts = user_scripts.copy()
                             updated_scripts[script_name] = {"system_prompt": n_sys, "user_script": n_usr}
                             
                             app.save_user(nu, {"password": np, "role": nr, "scripts": updated_scripts})
                             st.success("Dados atualizados no MongoDB!")
                             st.rerun()
+
+                    if submit_delete:
+                        if not is_new_script and selected_script_edit in user_scripts:
+                            updated_scripts = user_scripts.copy()
+                            del updated_scripts[selected_script_edit]
+                            
+                            app.save_user(nu, {"password": np, "role": nr, "scripts": updated_scripts})
+                            st.success(f"Script '{selected_script_edit}' excluído com sucesso!")
+                            st.rerun()
+                        elif is_new_script:
+                            st.warning("Não é possível excluir um script não salvo.")
 
                 st.divider()
                 st.write("### 📜 Usuários Cadastrados")
