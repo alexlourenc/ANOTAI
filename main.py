@@ -36,10 +36,14 @@ class Anotai:
         self.fs = fs
         
         self.tz = pytz.timezone("America/Sao_Paulo")
+        
+        # Taxa de câmbio base para conversão USD -> BRL / Base exchange rate for USD -> BRL conversion
+        self.usd_to_brl_rate = 5.50 
+        
         self._setup_environment()
 
     def _setup_environment(self):
-        # Cria admin inicial com a nova estrutura de scripts / Creates initial admin with new scripts structure
+        # Cria admin inicial / Creates initial admin
         if self.users_col is not None:
             try:
                 if self.users_col.count_documents({}) == 0:
@@ -57,14 +61,13 @@ class Anotai:
                 print(f"Erro ao inicializar banco: {e}")
 
     def load_users(self):
-        """Busca todos os usuários e garante a estrutura de scripts / Fetches all users and ensures scripts structure"""
+        """Busca todos os usuários / Fetches all users"""
         if self.users_col is None:
             return {}
         try:
             users_dict = {}
             for u in self.users_col.find({}):
                 username = u['username']
-                # Garante retrocompatibilidade para usuários antigos / Ensures backward compatibility for old users
                 if "scripts" not in u:
                     u["scripts"] = {
                         "Geral": {
@@ -133,28 +136,31 @@ class Anotai:
         return self.meetings_col.find_one({"file_id": file_id}) or {}
 
     def transcribe_audio(self, file_id, owner_name):
-        """Transcreve usando tempfile e salva no banco / Transcribes using tempfile and saves to DB"""
+        """Transcreve áudio e calcula custo Whisper / Transcribes audio and calculates Whisper cost"""
         grid_out = self.fs.find_one({"filename": file_id})
         if not grid_out: 
             return False, "Arquivo de áudio não encontrado no banco de dados."
 
         try:
-            # Cria arquivo físico temporário / Creates temporary physical file
             with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_audio:
                 tmp_audio.write(grid_out.read())
                 tmp_path = tmp_audio.name
 
             try:
-                # Transcrição via arquivo / Transcription via file
                 with open(tmp_path, "rb") as audio_file:
                     transcript = self.client.audio.transcriptions.create(
                         model="whisper-1", 
                         file=audio_file, 
-                        language="pt"
+                        language="pt",
+                        response_format="verbose_json"
                     )
                 raw_text = transcript.text
+                
+                # Cálculo de custo Whisper ($0.006 por minuto) / Whisper cost calculation ($0.006 per minute)
+                duration_sec = getattr(transcript, 'duration', 0.0)
+                whisper_cost_usd = (duration_sec / 60.0) * 0.006
+
             finally:
-                # Remove o arquivo temporário após o uso / Removes temporary file after use
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 
@@ -163,7 +169,9 @@ class Anotai:
                 {"$set": {
                     "file_id": file_id, 
                     "owner": owner_name, 
-                    "raw": raw_text, 
+                    "raw": raw_text,
+                    "audio_duration_sec": duration_sec,
+                    "whisper_cost_usd": whisper_cost_usd,
                     "created_at": datetime.datetime.now(self.tz)
                 }},
                 upsert=True
@@ -173,7 +181,7 @@ class Anotai:
             return False, f"Falha na API da OpenAI (Whisper): {str(e)}"
 
     def analyze_text(self, file_id, owner_name, script_name):
-        """Lê a transcrição e aplica o script selecionado / Reads transcription and applies selected script"""
+        """Analisa texto e calcula custo de tokens GPT-4o / Analyzes text and calculates GPT-4o token cost"""
         doc = self.get_meeting_data(file_id)
         raw_text = doc.get("raw", "")
         
@@ -183,7 +191,6 @@ class Anotai:
         users = self.load_users()
         u_data = users.get(owner_name, {})
         
-        # Seleciona o script específico / Selects specific script
         scripts_dict = u_data.get("scripts", {})
         selected_script = scripts_dict.get(script_name, {})
         
@@ -199,10 +206,24 @@ class Anotai:
                 ]
             )
             result_text = response.choices[0].message.content
+            
+            # Captura uso de tokens / Captures token usage
+            prompt_tokens = response.usage.prompt_tokens
+            completion_tokens = response.usage.completion_tokens
+            total_tokens = response.usage.total_tokens
+            
+            # Cálculo de custo GPT-4o ($0.0025/1k input, $0.010/1k output) / GPT-4o cost calculation
+            gpt_cost_usd = (prompt_tokens / 1000.0) * 0.0025 + (completion_tokens / 1000.0) * 0.010
 
             self.meetings_col.update_one(
                 {"file_id": file_id},
-                {"$set": {"result": result_text}}
+                {"$set": {
+                    "result": result_text,
+                    "gpt_prompt_tokens": prompt_tokens,
+                    "gpt_completion_tokens": completion_tokens,
+                    "gpt_total_tokens": total_tokens,
+                    "gpt_cost_usd": gpt_cost_usd
+                }}
             )
             return True, result_text
         except Exception as e:
@@ -304,7 +325,7 @@ def main():
                             if success:
                                 st.rerun()
                             else:
-                                st.error(msg) # Mostra o erro exato na tela em vez de falhar em silêncio
+                                st.error(msg)
                 else:
                     st.success("✅ Transcrição concluída e salva no banco.")
                     with st.expander("Ver Transcrição Original"):
@@ -329,10 +350,22 @@ def main():
                                     if success:
                                         st.rerun()
                                     else:
-                                        st.error(msg) # Mostra o erro exato na tela
+                                        st.error(msg)
                     else:
                         st.success("✅ Análise de IA concluída.")
                         
+                        # Exibição de Custos Financeiros / Financial Costs Display
+                        st.write("### 💰 Resumo de Custos (FinOps)")
+                        whisper_c = doc.get("whisper_cost_usd", 0.0)
+                        gpt_c = doc.get("gpt_cost_usd", 0.0)
+                        total_usd = whisper_c + gpt_c
+                        total_brl = total_usd * app.usd_to_brl_rate
+                        
+                        col_c1, col_c2, col_c3 = st.columns(3)
+                        col_c1.metric(label="Custo Total (BRL)", value=f"R$ {total_brl:.4f}")
+                        col_c2.metric(label="Custo Total (USD)", value=f"$ {total_usd:.4f}")
+                        col_c3.metric(label="Tokens Utilizados (GPT)", value=doc.get("gpt_total_tokens", 0))
+
                         st.write("### 📤 Opções de Exportação")
                         st.download_button("📥 Jira CSV", data=app.convert_to_jira_csv(result_text), file_name=f"jira_{st.session_state.active_file}.csv")
 
